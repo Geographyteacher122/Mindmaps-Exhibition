@@ -123,6 +123,20 @@ main{max-width:1200px;width:100%;margin:1.2rem auto 3rem;padding:0 1.5rem;flex:1
 .btn:hover{background:var(--wine-dark)}
 .btn.ghost{background:transparent;color:var(--wine);box-shadow:inset 0 0 0 1.5px var(--wine)}
 .btn.ghost:hover{background:var(--wine);color:var(--cream)}
+.stats{background:#fff;border:1px solid var(--line);border-radius:8px;padding:1rem 1.1rem 1.1rem;margin-bottom:1.6rem}
+.stats-head{display:flex;justify-content:space-between;align-items:baseline;gap:.6rem;margin-bottom:.8rem;flex-wrap:wrap}
+.stats-head h4{font-family:var(--serif);font-size:1.3rem}
+.stats-head span{font-size:.88rem;color:var(--sage-dark);font-weight:600}
+.bar-row{display:grid;grid-template-columns:36px minmax(90px,170px) 1fr auto;align-items:center;gap:.7rem;padding:.3rem 0}
+.bar-row img{width:36px;height:36px;object-fit:cover;border-radius:6px;border:1px solid var(--line)}
+.bar-name{font-weight:600;font-size:.95rem;color:var(--wine-dark)}
+.bar-track{background:var(--cream);border-radius:99px;height:16px;overflow:hidden}
+.bar-fill{height:100%;border-radius:99px;background:var(--sage);transition:width .5s ease;min-width:0}
+.bar-row.lead .bar-fill{background:var(--wine)}
+.bar-row.lead .bar-name::before{content:"👑 ";}
+.bar-val{font-weight:700;font-size:.9rem;min-width:4.5rem;text-align:left;color:var(--wine-dark)}
+.bar-val small{font-weight:500;color:var(--sage-dark)}
+@media(max-width:600px){.bar-row{grid-template-columns:30px 1fr auto;grid-template-areas:"i n v" "t t t"}.bar-row img{width:30px;height:30px;grid-area:i}.bar-name{grid-area:n}.bar-val{grid-area:v}.bar-track{grid-area:t}}
 .manage{margin-top:2rem;border-top:1px solid var(--line);padding-top:1.3rem}
 .manage h4{font-family:var(--serif);font-size:1.3rem;margin-bottom:.8rem}
 .row{display:flex;align-items:center;justify-content:space-between;gap:.8rem;background:#fff;border:1px solid var(--line);border-radius:6px;padding:.55rem .95rem;margin-bottom:.5rem;font-size:.92rem}
@@ -243,6 +257,10 @@ footer b{color:var(--cream);font-weight:600}
 
     <div class="panel" id="adminBox" hidden>
       <h3><svg class="i"><use href="#i-gear"/></svg>لوحة التحكم والإضافة</h3>
+      <div class="stats" aria-label="مخطط الأصوات">
+        <div class="stats-head"><h4>مخطط الأصوات</h4><span id="statsTotal"></span></div>
+        <div id="chart"></div>
+      </div>
       <form id="addForm">
         <div class="fg"><label for="sName">اسم الطالبة</label>
           <input type="text" id="sName" class="fc" required placeholder="مثال: مريم العبرية"></div>
@@ -430,7 +448,21 @@ function login(){
 $('loginBtn').addEventListener('click', login);
 $('pass').addEventListener('keydown', e => { if(e.key==='Enter') login(); });
 
+function renderChart(){
+  const total = maps.reduce((a,m)=>a+m.votes,0);
+  const sorted = [...maps].sort((a,b)=>b.votes-a.votes);
+  const max = Math.max(1, sorted.length ? sorted[0].votes : 1);
+  $('statsTotal').textContent = 'إجمالي الأصوات: ' + total;
+  $('chart').innerHTML = sorted.map((m,i)=>{
+    const pct = total ? Math.round(m.votes*100/total) : 0;
+    const lead = total>0 && m.votes===sorted[0].votes;
+    return `<div class="bar-row ${lead?'lead':''}"><img src="${m.imageUrl}" alt=""><div class="bar-name">${esc(m.title)}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${m.votes*100/max}%"></div></div>
+      <div class="bar-val">${m.votes} <small>(${pct}%)</small></div></div>`;
+  }).join('') || '<p style="color:var(--sage-dark)">لا توجد مشاركات.</p>';
+}
 function renderManage(){
+  renderChart();
   $('manageList').innerHTML = maps.map(m=>`<div class="row"><span>${esc(m.title)} — ${m.votes} صوت</span>
     <span style="display:flex;gap:.9rem"><button data-edit="${m.id}">${ic('edit')}تعديل</button><button data-del="${m.id}">${ic('trash')}حذف</button></span></div>`).join('') || '<p style="color:var(--sage-dark)">لا توجد مشاركات.</p>';
 }
