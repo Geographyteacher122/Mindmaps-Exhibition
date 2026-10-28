@@ -276,6 +276,8 @@ footer b{color:var(--cream);font-weight:600}
 
 <script>
 const ADMIN_PASS = '54321';
+/* رابط قاعدة بيانات Firebase المشتركة (يُملأ بعد إنشائها). إذا تُرك فارغًا يعمل الموقع بوضع الجهاز الواحد */
+const FIREBASE_URL = '';
 const KEY_STATE = 'oman_museum_state_v3', KEY_VOTE = 'user_voted_map_id_v3';
 
 /* المشاركات الأساسية (مضمّنة في الملف فتظهر لكل الزوار) */
@@ -284,12 +286,19 @@ const BASE = [...document.querySelectorAll('#grid .card')].map(c=>({
 }));
 
 /* الحالة المحفوظة على هذا الجهاز: الأصوات + ما تضيفه أو تعدّله من لوحة الإدارة */
+const DB = (typeof FIREBASE_URL==='string' ? FIREBASE_URL.trim().replace(/\/+$/,'') : '');
 let st = {votes:{}, removed:[], edits:{}, added:[]}, votedId = null, maps = [];
 try{
   const raw = localStorage.getItem(KEY_STATE);
-  if(raw) st = Object.assign(st, JSON.parse(raw));
+  if(raw){ const l = JSON.parse(raw); st = Object.assign(st, DB ? {} : l); }
   votedId = localStorage.getItem(KEY_VOTE);
 }catch(e){}
+/* معرّف هذا الجهاز (صوت واحد لكل جهاز) */
+let deviceId = '';
+try{ deviceId = localStorage.getItem('oman_device_v1') || ''; }catch(e){}
+if(!deviceId){ deviceId = 'd'+Math.random().toString(36).slice(2,10)+Date.now().toString(36); try{ localStorage.setItem('oman_device_v1', deviceId); }catch(e){} }
+const dbf = (path, method, body) => fetch(DB+path+'.json', {method:method||'GET', headers:body!==undefined?{'Content-Type':'application/json'}:undefined, body:body!==undefined?JSON.stringify(body):undefined})
+  .then(r => { if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); });
 
 function rebuild(){
   maps = BASE.filter(b=>!st.removed.includes(b.id))
@@ -297,7 +306,13 @@ function rebuild(){
     .concat(st.added)
     .map(m=>Object.assign({}, m, {votes: st.votes[m.id]||0}));
 }
-function save(){
+function pushConfig(){
+  if(!DB) return;
+  dbf('/config','PUT',{removed:st.removed, edits:st.edits, added:st.added})
+    .catch(()=>toast('تعذّر حفظ التغييرات على الخادم، تحققي من الاتصال'));
+}
+function save(admin){
+  if(admin) pushConfig();
   try{
     localStorage.setItem(KEY_STATE, JSON.stringify(st));
     votedId ? localStorage.setItem(KEY_VOTE, votedId) : localStorage.removeItem(KEY_VOTE);
@@ -349,7 +364,28 @@ $('grid').addEventListener('click', e => {
 });
 $('searchInput').addEventListener('input', renderGallery);
 
-function toggleVote(id){
+async function syncVotes(){
+  if(!DB) return;
+  try{
+    const v = (await dbf('/voters')) || {}, tally = {};
+    Object.keys(v).forEach(k => { tally[v[k]] = (tally[v[k]]||0)+1; });
+    st.votes = tally; votedId = v[deviceId] || null;
+    try{ votedId ? localStorage.setItem(KEY_VOTE, votedId) : localStorage.removeItem(KEY_VOTE); }catch(e){}
+    rebuild(); renderGallery();
+    if(!$('sec-results').hidden) renderPodium();
+    if(!$('adminBox').hidden) renderManage();
+  }catch(e){}
+}
+async function syncConfig(){
+  if(!DB) return;
+  try{
+    const c = (await dbf('/config')) || {};
+    st.removed = c.removed || []; st.edits = c.edits || {}; st.added = c.added || [];
+    rebuild(); renderGallery();
+    if(!$('adminBox').hidden && editId===null) renderManage();
+  }catch(e){}
+}
+async function toggleVote(id){
   if(!find(id)) return;
   const dec = k => { if(k!=null && st.votes[k]) st.votes[k] = Math.max(0, st.votes[k]-1); };
   if(String(votedId)===String(id)){ dec(id); votedId=null; toast('تم إلغاء تصويتك'); }
@@ -358,6 +394,11 @@ function toggleVote(id){
     votedId=id; st.votes[id]=(st.votes[id]||0)+1; toast('تم تسجيل تصويتك، شكرًا لمشاركتك');
   }
   save(); rebuild(); renderGallery();
+  if(DB){
+    try{ await (votedId ? dbf('/voters/'+deviceId,'PUT',votedId) : dbf('/voters/'+deviceId,'DELETE')); }
+    catch(e){ toast('تعذّر الاتصال بالخادم، حاولي مرة أخرى'); }
+    syncVotes();
+  }
 }
 
 function renderPodium(){
@@ -412,11 +453,13 @@ $('manageList').addEventListener('click', e => {
   if(BASE.some(b=>b.id===id)) st.removed.push(id); else st.added = st.added.filter(m=>String(m.id)!==id);
   delete st.votes[id];
   if(String(votedId)===id) votedId=null;
-  save(); rebuild(); renderManage(); renderGallery();
+  save(true); rebuild(); renderManage(); renderGallery();
 });
-$('resetVotes').addEventListener('click', () => {
-  if(!confirm('تصفير جميع الأصوات على هذا الجهاز؟')) return;
-  st.votes={}; votedId=null; save(); rebuild(); renderManage(); renderGallery(); toast('تم تصفير الأصوات');
+$('resetVotes').addEventListener('click', async () => {
+  if(!confirm(DB ? 'تصفير جميع الأصوات لدى جميع الزوار؟' : 'تصفير جميع الأصوات على هذا الجهاز؟')) return;
+  st.votes={}; votedId=null; save(); rebuild(); renderManage(); renderGallery();
+  if(DB){ try{ await dbf('/voters','DELETE'); toast('تم تصفير الأصوات للجميع'); }catch(e){ toast('تعذّر التصفير على الخادم'); } syncVotes(); }
+  else toast('تم تصفير الأصوات');
 });
 
 function compress(file, cb){
@@ -444,7 +487,7 @@ $('addForm').addEventListener('submit', e => {
     const done = url => {
       if(isBase){ st.edits[id] = Object.assign({}, st.edits[id], {title}, url?{imageUrl:url}:{}); }
       else { const m = st.added.find(x=>String(x.id)===id); if(m){ m.title=title; if(url) m.imageUrl=url; } }
-      if(save()){ setEdit(null); rebuild(); renderGallery(); renderManage(); toast('تم حفظ التعديلات'); }
+      if(save(true)){ setEdit(null); rebuild(); renderGallery(); renderManage(); toast('تم حفظ التعديلات'); }
       else st = JSON.parse(snapshot);
     };
     f ? compress(f, done) : done(null);
@@ -454,13 +497,20 @@ $('addForm').addEventListener('submit', e => {
   compress(f, url => {
     const item = {id:'u'+Date.now(), title, imageUrl:url};
     st.added.push(item);
-    if(save()){ $('addForm').reset(); rebuild(); renderGallery(); renderManage(); toast('تمت إضافة الخريطة الذهنية بنجاح'); switchTab('gallery'); }
+    if(save(true)){ $('addForm').reset(); rebuild(); renderGallery(); renderManage(); toast('تمت إضافة الخريطة الذهنية بنجاح'); switchTab('gallery'); }
     else st.added.pop();
   });
 });
 
 rebuild();
 renderGallery();
+$('manageList').insertAdjacentHTML('beforebegin', '<p style="font-size:.85rem;margin-bottom:.6rem;color:var(--sage-dark)">'+(DB?'● الوضع: مشترك — الأصوات والتعديلات تظهر لجميع الزوار':'○ الوضع: محلي — الأصوات والتعديلات على هذا الجهاز فقط')+'</p>');
+if(DB){
+  syncConfig(); syncVotes();
+  setInterval(syncVotes, 10000);
+  setInterval(()=>{ if(!document.hidden && editId===null) syncConfig(); }, 45000);
+  document.addEventListener('visibilitychange', ()=>{ if(!document.hidden){ syncVotes(); } });
+}
 
 </script>
 </body>
